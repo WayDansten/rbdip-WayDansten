@@ -19,6 +19,8 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final PricingCalculator pricingCalculator = new PricingCalculator();
+    private final OrderValidator orderValidator = new OrderValidator();
+    private final OrderNotifier orderNotifier = new OrderNotifier();
 
     public OrderService(
             ProductRepository productRepository,
@@ -31,25 +33,18 @@ public class OrderService {
 
     @Transactional
     public Order createOrder(CreateOrderRequest request) {
-        if (request.customerFullName() == null || request.customerFullName().isBlank()) {
-            throw new IllegalArgumentException("customerFullName is required");
-        }
-        if (request.customerAddress() == null || request.customerAddress().isBlank()) {
-            throw new IllegalArgumentException("customerAddress is required");
-        }
-        if (request.items() == null || request.items().isEmpty()) {
-            throw new IllegalArgumentException("order must contain at least one item");
-        }
+        orderValidator.validateCustomerName(request);
+        orderValidator.validateCustomerAddress(request);
+        orderValidator.validateItems(request);
 
         List<Product> products = new ArrayList<>();
         List<PricingCalculator.LineItem> lineItems = new ArrayList<>();
+
         for (CreateOrderRequest.Item raw : request.items()) {
             Product product = productRepository.findById(raw.productId())
                     .orElseThrow(() -> new IllegalArgumentException("product " + raw.productId() + " not found"));
+            orderValidator.validateQuantity(raw);
             int quantity = raw.quantity() == null ? 1 : raw.quantity();
-            if (quantity <= 0) {
-                throw new IllegalArgumentException("quantity must be positive");
-            }
             products.add(product);
             lineItems.add(new PricingCalculator.LineItem(product.getPrice(), quantity));
         }
@@ -67,15 +62,8 @@ public class OrderService {
             orderItemRepository.save(new OrderItem(order.getId(), product.getName(), product.getPrice(), quantity));
         }
 
-        sendConfirmationEmail(request.customerFullName(), order.getId(), total);
+        orderNotifier.sendConfirmationEmail(request.customerFullName(), order.getId(), total);
 
         return order;
-    }
-
-    private void sendConfirmationEmail(String customerName, Long orderId, BigDecimal total) {
-        // Реальный почтовый транспорт не настроен в учебном проекте - здесь
-        // просто эмулируется побочный эффект отправки письма.
-        System.out.printf(
-                "[email] Dear %s, your order #%d for %s has been placed.%n", customerName, orderId, total);
     }
 }
